@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{ title }}</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#121a2b; --line:#25334c; --text:#e6edf7; --muted:#9aabc2; --blue:#6ea8fe; --green:#70d6a0; --amber:#f0c36a; --red:#ff8585; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(ellipse at top left,#14233e 0,transparent 48%),var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; min-height:100vh; }
+    main { max-width:1120px; margin:0 auto; padding:36px 22px 60px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:26px; }
+    h1 { font-size:clamp(1.6rem,3vw,2.2rem); margin:0; letter-spacing:-.03em; }
+    .subtitle { color:var(--muted); margin:.4rem 0 0; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; }
+    button { border:1px solid var(--line); background:#19243a; color:var(--text); padding:10px 14px; border-radius:9px; font-weight:650; cursor:pointer; }
+    button:hover { border-color:var(--blue); }
+    button.primary { background:#245bb1; border-color:#3976d4; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    .card { border:1px solid var(--line); background:rgba(18,26,43,.94); border-radius:13px; padding:18px; min-width:0; }
+    .wide { grid-column:1/-1; }
+    .label { color:var(--muted); font-size:.82rem; text-transform:uppercase; letter-spacing:.08em; }
+    .value { font-size:1.08rem; font-weight:650; margin-top:5px; overflow-wrap:anywhere; }
+    .status { display:inline-flex; align-items:center; gap:9px; }
+    .dot { width:9px; height:9px; display:inline-block; border-radius:50%; background:var(--amber); box-shadow:0 0 12px currentColor; }
+    .dot.ok { background:var(--green); }.dot.error { background:var(--red); }
+    .logs { display:flex; flex-direction:column; gap:8px; max-height:390px; overflow:auto; padding-right:4px; }
+    .log { display:grid; grid-template-columns:175px 70px minmax(0,1fr); gap:12px; border-bottom:1px solid rgba(37,51,76,.65); padding:8px 0; font-size:.9rem; }
+    .log time,.muted { color:var(--muted); }.level { font-weight:700; }.warning { color:var(--amber); }.error-text { color:var(--red); }
+    .notice { color:var(--muted); font-size:.9rem; margin:18px 2px 0; }
+    #feedback { min-height:1.5rem; color:var(--muted); margin:12px 2px 0; }
+    @media(max-width:760px) { header { flex-direction:column; }.grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.wide { grid-column:1/-1; } }
+    @media(max-width:520px) { .grid { grid-template-columns:1fr; }.wide { grid-column:auto; }.log { grid-template-columns:1fr; gap:2px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>OCI A1 Capacity Hunter</h1>
+      <p class="subtitle">Local monitoring for your OCI instance launch attempts.</p>
+    </div>
+    <div class="actions">
+      <button id="toggle" class="primary" type="button">Pause polling</button>
+      <button id="test-alert" type="button">Send test alert</button>
+    </div>
+  </header>
+  <section class="grid" aria-label="Provisioning status">
+    <article class="card"><div class="label">Status</div><div class="value status"><span id="dot" class="dot"></span><span id="status">Connecting</span></div></article>
+    <article class="card"><div class="label">Launch attempts</div><div id="attempts" class="value">0</div></article>
+    <article class="card"><div class="label">Current availability domain</div><div id="current-ad" class="value">—</div></article>
+    <article class="card wide"><div class="label">Details</div><div id="message" class="value">Waiting for application status</div></article>
+    <article class="card"><div class="label">Availability domains</div><div id="ads" class="value">—</div></article>
+    <article class="card"><div class="label">Last attempt</div><div id="last-attempt" class="value">—</div></article>
+    <article class="card"><div class="label">Next retry</div><div id="next-retry" class="value">—</div></article>
+    <article class="card wide"><div class="label">Instance OCID</div><div id="instance-id" class="value">—</div></article>
+    <article class="card"><div class="label">Public IPv4</div><div id="public-ip" class="value">—</div></article>
+    <article class="card wide"><div class="label">Recent activity</div><div id="logs" class="logs" aria-live="polite"></div></article>
+  </section>
+  <div id="feedback" role="status"></div>
+  <p class="notice">This dashboard controls only the local polling process. It does not create or change OCI network resources. Keep it bound to a trusted machine.</p>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (value) => value ? new Date(value).toLocaleString() : "—";
+  async function refresh() {
+    try {
+      const response = await fetch("/api/status", {cache:"no-store"});
+      if (!response.ok) throw new Error("Status request failed");
+      const data = await response.json();
+      $("status").textContent = data.status;
+      $("message").textContent = data.message;
+      $("attempts").textContent = data.attempts;
+      $("current-ad").textContent = data.current_ad || "—";
+      $("ads").textContent = data.availability_domains.join(", ") || "—";
+      $("last-attempt").textContent = fmt(data.last_attempt_at);
+      $("next-retry").textContent = fmt(data.next_retry_at);
+      $("instance-id").textContent = data.instance_id || "—";
+      $("public-ip").textContent = data.public_ip || "—";
+      $("toggle").textContent = data.running ? "Pause polling" : "Resume polling";
+      const dot = $("dot"); dot.className = "dot";
+      if (data.status === "Provisioned") dot.classList.add("ok");
+      if (data.status === "Error") dot.classList.add("error");
+      const logs = $("logs"); logs.replaceChildren();
+      for (const item of [...data.logs].reverse()) {
+        const row = document.createElement("div"); row.className = "log";
+        const time = document.createElement("time"); time.textContent = fmt(item.timestamp);
+        const level = document.createElement("span"); level.className = "level" + (item.level === "ERROR" ? " error-text" : item.level === "WARNING" ? " warning" : ""); level.textContent = item.level;
+        const message = document.createElement("span"); message.textContent = item.message;
+        row.append(time, level, message); logs.append(row);
+      }
+    } catch (error) { $("feedback").textContent = "Unable to connect to the local application."; }
+  }
+  $("toggle").addEventListener("click", async () => {
+    const response = await fetch("/api/toggle", {method:"POST"});
+    if (!response.ok) { $("feedback").textContent = "Could not change polling state."; return; }
+    $("feedback").textContent = "Polling state updated."; refresh();
+  });
+  $("test-alert").addEventListener("click", async () => {
+    const button = $("test-alert"); button.disabled = true;
+    try {
+      const response = await fetch("/api/test-alert", {method:"POST"});
+      const data = await response.json();
+      $("feedback").textContent = response.ok ? `Test alert sent to ${data.channels.join(", ")}.` : data.detail;
+    } catch (error) { $("feedback").textContent = "Could not send the test alert."; }
+    finally { button.disabled = false; }
+  });
+  refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

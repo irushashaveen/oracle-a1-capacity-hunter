@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+__pycache__
+*.py[cod]
+config.json
+.env
+secrets/
+.oci/
+.test-oci/
+docs/
+logs/
+tests/
+oci-a1-auto-provisioner-docs.md

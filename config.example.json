@@ -1,0 +1,50 @@
+{
+  "oci_profile": {
+    "config_file_path": "~/.oci/config",
+    "profile_name": "DEFAULT",
+    "compartment_id": ""
+  },
+  "instance_specs": {
+    "display_name": "oci-a1-node",
+    "shape": "VM.Standard.A1.Flex",
+    "ocpus": 1,
+    "memory_in_gbs": 6,
+    "boot_volume_size_in_gbs": 50,
+    "operating_system": "Canonical Ubuntu",
+    "os_version": "22.04",
+    "assign_public_ip": true,
+    "ssh_public_key_path": "/run/secrets/id_ed25519.pub",
+    "subnet_id": "",
+    "image_id": "",
+    "cloud_init_file": ""
+  },
+  "polling_policy": {
+    "standard_retry_interval_seconds": 60,
+    "jitter_seconds": 8,
+    "rate_limit_backoff_seconds": 120,
+    "rate_limit_backoff_max_seconds": 1800,
+    "cycle_availability_domains": true,
+    "maximum_attempts": 0
+  },
+  "ui": {
+    "enable_tui": true,
+    "enable_web": true,
+    "web_host": "127.0.0.1",
+    "web_port": 8080
+  },
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "",
+      "chat_id": ""
+    },
+    "discord": {
+      "enabled": false,
+      "webhook_url": ""
+    },
+    "webhook": {
+      "enabled": false,
+      "url": ""
+    }
+  }
+}

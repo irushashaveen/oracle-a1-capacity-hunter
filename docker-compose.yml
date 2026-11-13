@@ -1,0 +1,42 @@
+services:
+  oci-a1-capacity-hunter:
+    build: .
+    image: oci-a1-capacity-hunter:local
+    container_name: oci-a1-capacity-hunter
+    restart: unless-stopped
+    command: ["--web"]
+    ports:
+      - "127.0.0.1:${HOST_PORT:-18080}:8080"
+    environment:
+      CONFIG_PATH: /app/config.json
+      OCI_A1__UI__WEB_HOST: 0.0.0.0
+      OCI_A1__OCI_PROFILE__CONFIG_FILE_PATH: /home/app/.oci/config
+      OCI_A1_CONTAINER: "1"
+      OCI_A1_HOST_OCI_DIR: ${OCI_CONFIG_DIR:?Set OCI_CONFIG_DIR in .env to your local OCI config directory}
+      OCI_A1__NOTIFICATIONS__TELEGRAM__ENABLED: ${OCI_A1__NOTIFICATIONS__TELEGRAM__ENABLED:-false}
+      OCI_A1__NOTIFICATIONS__TELEGRAM__BOT_TOKEN: ${OCI_A1__NOTIFICATIONS__TELEGRAM__BOT_TOKEN:-}
+      OCI_A1__NOTIFICATIONS__TELEGRAM__CHAT_ID: ${OCI_A1__NOTIFICATIONS__TELEGRAM__CHAT_ID:-}
+      OCI_A1__NOTIFICATIONS__DISCORD__ENABLED: ${OCI_A1__NOTIFICATIONS__DISCORD__ENABLED:-false}
+      OCI_A1__NOTIFICATIONS__DISCORD__WEBHOOK_URL: ${OCI_A1__NOTIFICATIONS__DISCORD__WEBHOOK_URL:-}
+      OCI_A1__NOTIFICATIONS__WEBHOOK__ENABLED: ${OCI_A1__NOTIFICATIONS__WEBHOOK__ENABLED:-false}
+      OCI_A1__NOTIFICATIONS__WEBHOOK__URL: ${OCI_A1__NOTIFICATIONS__WEBHOOK__URL:-}
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/id_ed25519.pub
+        target: /run/secrets/id_ed25519.pub
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OCI_CONFIG_DIR:?Set OCI_CONFIG_DIR in .env to your local OCI config directory}
+        target: /home/app/.oci
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    init: true

@@ -1,0 +1,28 @@
+# Local runtime configuration and credentials
+/config.json
+/.env
+/secrets/
+/.oci/
+/.test-oci/
+
+# Local documentation and generated artifacts
+/docs/
+/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

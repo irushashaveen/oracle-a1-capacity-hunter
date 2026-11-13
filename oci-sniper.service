@@ -1,0 +1,22 @@
+[Unit]
+Description=OCI A1 Capacity Hunter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/oci-a1-capacity-hunter
+Environment=CONFIG_PATH=/opt/oci-a1-capacity-hunter/config.json
+ExecStart=/usr/bin/python3 -m app.main --cli
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/opt/oci-a1-capacity-hunter/config.json
+
+[Install]
+WantedBy=multi-user.target
