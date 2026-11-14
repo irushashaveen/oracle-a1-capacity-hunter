@@ -82,6 +82,15 @@ class TelegramConfig(StrictModel):
     bot_token: SecretStr = SecretStr("")
     chat_id: str = ""
 
+    @field_validator("chat_id", mode="before")
+    @classmethod
+    def normalize_chat_id(cls, value: Any) -> Any:
+        # Telegram chat IDs are numeric, and environment overrides parse
+        # numeric-looking values as integers before Pydantic validation.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
     @model_validator(mode="after")
     def validate_enabled_channel(self) -> "TelegramConfig":
         if self.enabled and (not self.bot_token.get_secret_value() or not self.chat_id.strip()):
