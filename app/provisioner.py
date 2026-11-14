@@ -424,9 +424,20 @@ class Provisioner:
                         if len(resources.availability_domains) > 1:
                             ad_index = (ad_index + 1) % len(resources.availability_domains)
                     else:
-                        raise RuntimeError(
-                            f"OCI launch failed with HTTP {exc.status} ({exc.code}): {exc.message}"
-                        ) from exc
+                        detail = f"OCI launch failed with HTTP {exc.status} ({exc.code}): {exc.message}"
+                        self.state.update(status="Error", message=detail, next_retry_at=None)
+                        self.state.add_log(detail, "ERROR")
+                        self._send_notification(
+                            attempt_summary_message(
+                                attempt=attempt,
+                                availability_domain=ad_name,
+                                result="Launch failed; polling stopped",
+                                detail=f"HTTP {exc.status} ({exc.code}): {exc.message}",
+                            ),
+                            event="launch_attempt_failed",
+                            description=f"Attempt {attempt} summary",
+                        )
+                        return
 
                     retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
                     next_ad = resources.availability_domains[ad_index]
