@@ -109,6 +109,7 @@ The application reads `config.json` in the current directory by default. Set `CO
 | `polling_policy.standard_retry_interval_seconds` | `60` | Base wait after capacity errors, adjusted by jitter. |
 | `polling_policy.rate_limit_backoff_seconds` | `120` | Initial wait for HTTP 429; subsequent waits double up to the cap. |
 | `polling_policy.rate_limit_backoff_max_seconds` | `1800` | Maximum exponential backoff. A server `Retry-After` value takes precedence when it is longer. |
+| `polling_policy.instance_status_poll_interval_seconds` | `15` | How often to check whether an accepted launch has reached `RUNNING`. |
 | `polling_policy.maximum_attempts` | `0` | Zero retries indefinitely; a positive number stops after that many launch requests. |
 | `ui.web_host` | `127.0.0.1` | Local web server bind address. Compose overrides this inside the container and publishes only to host loopback. |
 | `ui.web_port` | `8080` | Port inside the container and local web server port. Compose maps the host port from `HOST_PORT` (default `18080`). |
@@ -135,7 +136,7 @@ Before polling, the application validates the SSH public key, loads the chosen O
 
 On an A1 capacity error, the application records the attempt, advances to the next availability domain when enabled, and waits for the configured interval plus random jitter. On HTTP 429, it starts at the configured backoff, doubles subsequent delays up to the maximum, and honors a longer `Retry-After` header. Authentication, permission, validation, and other unexpected errors stop polling and appear in the dashboard.
 
-After OCI accepts a launch request, the application stops polling and reports the instance OCID, lifecycle state, availability domain, and public IP when it is available. Assigning a public IP does not configure routing or firewall access; confirm that your subnet route table and security rules fit your use case.
+After OCI accepts a launch request, the application sends an attempt summary and checks the instance state at the configured interval. It sends the final ready alert only after OCI reports `RUNNING`. If the instance terminates before becoming ready, the application records and alerts that failure. Assigning a public IP does not configure routing or firewall access; confirm that your subnet route table and security rules fit your use case.
 
 ## Security and operational notes
 
@@ -149,13 +150,42 @@ After OCI accepts a launch request, the application stops polling and reports th
 
 ## Notifications
 
-Channels are disabled by default. For Docker, edit `.env` and set the required values. For a Telegram bot, set `OCI_A1__NOTIFICATIONS__TELEGRAM__ENABLED=true`, `...__BOT_TOKEN`, and `...__CHAT_ID`. Discord requires its enabled flag and webhook URL. The generic webhook receives JSON with `event` and `message` fields. Restart Compose after changing these values:
+Channels are disabled by default. Telegram sends a concise outcome summary after every launch attempt, including capacity failures and rate limits. If OCI accepts a launch, it also sends an acceptance summary, then sends a final ready alert after the instance reaches `RUNNING`.
+
+To configure Telegram with Docker:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) using `/newbot`, then copy its bot token.
+2. Open your new bot in Telegram and send `/start`.
+3. Add the token to the ignored `.env` file, then run this PowerShell snippet to retrieve the chat ID from the bot's updates:
+
+   ```powershell
+   $botToken = ((Get-Content .env | Where-Object { $_ -match '^OCI_A1__NOTIFICATIONS__TELEGRAM__BOT_TOKEN=' } | Select-Object -First 1) -split '=', 2)[1]
+   $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates"
+   $updates.result | ForEach-Object { if ($_.message) { $_.message.chat.id } } | Select-Object -Last 1
+   Remove-Variable botToken, updates
+   ```
+
+4. Set these entries in `.env`:
+
+   ```dotenv
+   OCI_A1__NOTIFICATIONS__TELEGRAM__ENABLED=true
+   OCI_A1__NOTIFICATIONS__TELEGRAM__BOT_TOKEN=your-bot-token
+   OCI_A1__NOTIFICATIONS__TELEGRAM__CHAT_ID=your-chat-id
+   ```
+
+5. Send a test alert. This command contacts Telegram but makes no OCI API calls:
+
+   ```powershell
+   docker compose run --rm --no-deps oci-a1-capacity-hunter --test-alert
+   ```
+
+After changing `.env`, rebuild and start the service to apply it. Starting the provisioner can make another OCI launch request, so check the dashboard and OCI Console first if a launch may already be in progress:
 
 ```powershell
-docker compose up -d
+docker compose up --build -d
 ```
 
-Use the dashboard's **Send test alert** button or run `python -m app.main --test-alert` locally to verify a configured channel. No OCI API calls are made by the test-alert command.
+Discord requires its enabled flag and webhook URL. The generic webhook receives JSON with `event` and `message` fields. Keep notification credentials in `.env`; do not share or commit them. The dashboard's **Send test alert** button also sends a real notification to the configured channel.
 
 ## systemd
 

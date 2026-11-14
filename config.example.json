@@ -23,6 +23,7 @@
     "jitter_seconds": 8,
     "rate_limit_backoff_seconds": 120,
     "rate_limit_backoff_max_seconds": 1800,
+    "instance_status_poll_interval_seconds": 15,
     "cycle_availability_domains": true,
     "maximum_attempts": 0
   },

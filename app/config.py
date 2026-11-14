@@ -57,6 +57,7 @@ class PollingPolicy(StrictModel):
     jitter_seconds: int = Field(default=8, ge=0, le=300)
     rate_limit_backoff_seconds: int = Field(default=120, ge=1, le=3600)
     rate_limit_backoff_max_seconds: int = Field(default=1800, ge=1, le=86400)
+    instance_status_poll_interval_seconds: int = Field(default=15, ge=1, le=300)
     cycle_availability_domains: bool = True
     maximum_attempts: int = Field(default=0, ge=0)
 

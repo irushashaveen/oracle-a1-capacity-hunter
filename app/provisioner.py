@@ -18,7 +18,12 @@ from oci.exceptions import ServiceError
 from app.cloud_init import encoded_user_data
 from app.config import AppConfig, read_ssh_public_key
 from app.discovery import DiscoveredResources, discover_resources
-from app.notifier import Notifier, NotificationError, provisioning_message
+from app.notifier import (
+    Notifier,
+    NotificationError,
+    attempt_summary_message,
+    provisioning_message,
+)
 from app.state import AppState, utc_now
 
 
@@ -124,6 +129,15 @@ class Provisioner:
         self.network_client = network_client
         self.compute_client = compute_client
 
+    def _send_notification(self, message: str, event: str, description: str) -> None:
+        if not self.notifier.enabled:
+            return
+        try:
+            channels = self.notifier.send(message, event=event)
+            self.state.add_log(f"{description} sent to " + ", ".join(channels))
+        except NotificationError as exc:
+            self.state.add_log(f"{description} could not be delivered: {exc}", "WARNING")
+
     def _prepare_clients(self) -> None:
         if all((self.sdk_config, self.identity_client, self.network_client, self.compute_client)):
             return
@@ -203,15 +217,109 @@ class Provisioner:
                 time.sleep(1.5)
         return None
 
-    def _report_success(self, instance: Any, resources: DiscoveredResources, ad_name: str) -> None:
+    def _wait_for_running(self, instance: Any, ad_name: str) -> Any | None:
+        assert self.compute_client is not None
+        current = instance
+        while True:
+            lifecycle_state = str(getattr(current, "lifecycle_state", "UNKNOWN"))
+            if lifecycle_state == "RUNNING":
+                return current
+            if lifecycle_state == "TERMINATED":
+                message = (
+                    f"Instance {current.id} entered TERMINATED before reaching RUNNING "
+                    f"in {ad_name}."
+                )
+                self.state.update(status="Error", message=message)
+                self.state.add_log(message, "ERROR")
+                self._send_notification(
+                    "OCI A1 Capacity Hunter: instance provisioning failed\n" + message,
+                    event="instance_provisioning_failed",
+                    description="Provisioning failure alert",
+                )
+                return None
+            if self.state.is_shutdown_requested():
+                self.state.update(
+                    status="Stopped",
+                    message="Stopped while waiting for the instance to reach RUNNING",
+                )
+                return None
+
+            self.state.update(
+                status="Provisioning",
+                message=f"Instance state is {lifecycle_state}; waiting for RUNNING",
+                instance_id=current.id,
+            )
+            interval = self.config.polling_policy.instance_status_poll_interval_seconds
+            if not self.state.wait(interval):
+                self.state.update(
+                    status="Stopped",
+                    message="Stopped while waiting for the instance to reach RUNNING",
+                )
+                return None
+            try:
+                current = self.compute_client.get_instance(current.id).data
+            except ServiceError as exc:
+                if exc.status not in (404, 429):
+                    raise RuntimeError(
+                        f"Could not check the launched instance state: HTTP {exc.status} ({exc.code})"
+                    ) from exc
+                wait_seconds = interval
+                if exc.status == 429:
+                    wait_seconds = min(
+                        max(interval, self.config.polling_policy.rate_limit_backoff_seconds),
+                        300,
+                    )
+                self.state.add_log(
+                    f"Could not check the launched instance state ({exc.code}); "
+                    f"retrying the status check in {wait_seconds}s",
+                    "WARNING",
+                )
+                if not self.state.wait(wait_seconds):
+                    self.state.update(
+                        status="Stopped",
+                        message="Stopped while waiting for the instance to reach RUNNING",
+                    )
+                    return None
+                continue
+
+    def _report_success(
+        self,
+        instance: Any,
+        resources: DiscoveredResources,
+        ad_name: str,
+        attempt: int,
+    ) -> None:
         self.state.update(
-            status="Provisioned",
-            message="OCI accepted the instance launch request",
+            status="Provisioning",
+            message="OCI accepted the launch request; waiting for RUNNING",
             instance_id=instance.id,
         )
+        self.state.add_log(
+            f"Launch accepted in {ad_name}; waiting for instance {instance.id} to reach RUNNING"
+        )
+        self._send_notification(
+            attempt_summary_message(
+                attempt=attempt,
+                availability_domain=ad_name,
+                result="Launch accepted",
+                detail=f"Instance OCID: {instance.id}. Waiting for RUNNING before the final alert.",
+            ),
+            event="launch_attempt_accepted",
+            description=f"Attempt {attempt} summary",
+        )
+
+        instance = self._wait_for_running(instance, ad_name)
+        if instance is None:
+            return
+
         public_ip = self._resolve_public_ip(instance.id, resources.compartment_id)
-        self.state.update(public_ip=public_ip)
-        self.state.add_log(f"Launch accepted in {ad_name}; instance OCID: {instance.id}")
+        self.state.update(
+            status="Provisioned",
+            message="Instance reached RUNNING",
+            instance_id=instance.id,
+            public_ip=public_ip,
+        )
+        self.state.add_log(f"Instance reached RUNNING in {ad_name}; instance OCID: {instance.id}")
         if not self.notifier.enabled:
             self.state.add_log("No notification channel is enabled; success is available in the dashboard")
             return
@@ -223,11 +331,7 @@ class Provisioner:
             availability_domain=ad_name,
             public_ip=public_ip,
         )
-        try:
-            channels = self.notifier.send(message, event="instance_provisioned")
-            self.state.add_log("Success notification delivered to " + ", ".join(channels))
-        except NotificationError as exc:
-            self.state.add_log(f"Instance launched, but notification delivery failed: {exc}", "WARNING")
+        self._send_notification(message, event="instance_provisioned", description="Final ready alert")
 
     def run(self) -> None:
         try:
@@ -289,7 +393,7 @@ class Provisioner:
                 try:
                     details = self._launch_details(resources, ad_name, ssh_key)
                     response = self.compute_client.launch_instance(details)
-                    self._report_success(response.data, resources, ad_name)
+                    self._report_success(response.data, resources, ad_name, attempt)
                     return
                 except ServiceError as exc:
                     if exc.status == 429:
@@ -325,11 +429,31 @@ class Provisioner:
                         ) from exc
 
                     retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    next_ad = resources.availability_domains[ad_index]
                     self.state.update(
                         status="Waiting",
                         message=f"Retrying after OCI response {exc.code}",
                         current_ad=resources.availability_domains[ad_index],
                         next_retry_at=retry_at.isoformat(timespec="seconds"),
+                    )
+                    if exc.status == 429:
+                        result = "Rate limited"
+                        detail = f"OCI returned HTTP 429 ({exc.code})."
+                    else:
+                        result = "No A1 capacity"
+                        detail = f"OCI returned HTTP {exc.status} ({exc.code}) in {ad_name}."
+                    self._send_notification(
+                        attempt_summary_message(
+                            attempt=attempt,
+                            availability_domain=ad_name,
+                            result=result,
+                            detail=detail,
+                            retry_delay_seconds=delay,
+                            next_retry_at=retry_at.isoformat(timespec="seconds"),
+                            next_availability_domain=next_ad if next_ad != ad_name else None,
+                        ),
+                        event="launch_attempt_failed",
+                        description=f"Attempt {attempt} summary",
                     )
                     if not self.state.wait(delay):
                         break
@@ -339,10 +463,16 @@ class Provisioner:
             self.state.update(status="Stopped", message=str(exc))
             self.state.add_log(str(exc), "WARNING")
             if self.notifier.enabled:
-                try:
-                    self.notifier.send(str(exc), event="existing_instance")
-                except NotificationError as notify_exc:
-                    self.state.add_log(f"Could not send existing-instance alert: {notify_exc}", "WARNING")
+                self._send_notification(
+                    "OCI A1 Capacity Hunter stopped: an existing instance was found.\n" + str(exc),
+                    event="existing_instance",
+                    description="Existing-instance alert",
+                )
         except Exception as exc:
             self.state.update(status="Error", message=str(exc), next_retry_at=None)
             self.state.add_log(f"Provisioner stopped: {exc}", "ERROR")
+            self._send_notification(
+                f"OCI A1 Capacity Hunter stopped with an error:\n{exc}",
+                event="provisioning_error",
+                description="Provisioning error alert",
+            )

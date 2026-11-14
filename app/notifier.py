@@ -90,7 +90,7 @@ def provisioning_message(
     public_ip_text = public_ip or "Not available yet; check the OCI Console"
     ssh_text = f"ssh ubuntu@{public_ip}" if public_ip else "Public IPv4 is not available yet"
     return "\n".join([
-        "OCI A1 Capacity Hunter: instance launch accepted",
+        "OCI A1 Capacity Hunter: instance is ready",
         f"Name: {display_name}",
         f"State: {lifecycle_state}",
         f"Instance OCID: {instance_id}",
@@ -99,3 +99,28 @@ def provisioning_message(
         f"Public IPv4: {public_ip_text}",
         f"SSH: {ssh_text}",
     ])
+
+
+def attempt_summary_message(
+    *,
+    attempt: int,
+    availability_domain: str,
+    result: str,
+    detail: str,
+    retry_delay_seconds: float | None = None,
+    next_retry_at: str | None = None,
+    next_availability_domain: str | None = None,
+) -> str:
+    lines = [
+        f"OCI A1 Capacity Hunter: attempt {attempt}",
+        f"Availability domain: {availability_domain}",
+        f"Result: {result}",
+        detail,
+    ]
+    if next_availability_domain:
+        lines.append(f"Next availability domain: {next_availability_domain}")
+    if retry_delay_seconds is not None:
+        lines.append(f"Retry in: {retry_delay_seconds:.0f} seconds")
+    if next_retry_at:
+        lines.append(f"Next retry at (UTC): {next_retry_at}")
+    return "\n".join(lines)
